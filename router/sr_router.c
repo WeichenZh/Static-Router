@@ -105,7 +105,7 @@ void sr_handlepacket(struct sr_instance* sr,
     {
       sr_arp_header = (sr_arp_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
       sr_arp_op = ntohs(sr_arp_header->ar_op);
-
+ 
       /* if its target ip is not the router, ignore it*/
       if (!sr_get_interface_by_ip(sr, sr_arp_header->ar_tip))
         break;
@@ -115,26 +115,25 @@ void sr_handlepacket(struct sr_instance* sr,
         /*request arp packet*/
         case arp_op_request:
         {
+          struct sr_arpreq *req = sr_arpcache_insert(&(sr->cache), sr_arp_header->ar_sha, sr_arp_header->ar_sip);
+
           /*set ethernet header*/
           sr_eth_pkg_hdr = (sr_ethernet_hdr_t *)buffer;
           memcpy(sr_eth_pkg_hdr->ether_dhost, sr_arp_header->ar_sha, ETHER_ADDR_LEN);
           memcpy(sr_eth_pkg_hdr->ether_shost, sr_pkg_if->addr, ETHER_ADDR_LEN);
-          sr_eth_pkg_hdr->ether_type = htons(0x0806);
+          sr_eth_pkg_hdr->ether_type = htons(ethertype_arp);
 
           /*set arp header*/
           sr_arp_pkg_hdr = (sr_arp_hdr_t *)(buffer+sizeof(sr_ethernet_hdr_t));
-          sr_arp_pkg_hdr->ar_hrd = htons(0x0001);
+          sr_arp_pkg_hdr->ar_hrd = htons(arp_hrd_ethernet);
           sr_arp_pkg_hdr->ar_pro = sr_arp_header->ar_pro;
           sr_arp_pkg_hdr->ar_hln = 6;
           sr_arp_pkg_hdr->ar_pln = 4;
-          sr_arp_pkg_hdr->ar_op = htons(0x0002);
-          sr_arp_pkg_hdr->ar_sip = sr_arp_header->ar_tip;
+          sr_arp_pkg_hdr->ar_op = htons(arp_op_reply);
+          sr_arp_pkg_hdr->ar_sip = sr_pkg_if->ip;
           sr_arp_pkg_hdr->ar_tip = sr_arp_header->ar_sip;
           memcpy(sr_arp_pkg_hdr->ar_sha, sr_pkg_if->addr, ETHER_ADDR_LEN);
           memcpy(sr_arp_pkg_hdr->ar_tha, sr_arp_header->ar_sha, ETHER_ADDR_LEN);
-
-          //memcpy(buffer, (uint8_t *)&sr_eth_pkg_hdr, sizeof(sr_ethernet_hdr_t));
-          //memcpy(buffer+sizeof(sr_ethernet_hdr_t), (uint8_t *)&sr_arp_pkg_hdr, sizeof(sr_arp_hdr_t));
 
           sent_pkg_len = sizeof(sr_ethernet_hdr_t)+sizeof(sr_arp_hdr_t);
           if (sr_send_packet(sr, buffer, sent_pkg_len, (const char *)interface) == -1)
@@ -146,11 +145,12 @@ void sr_handlepacket(struct sr_instance* sr,
         case arp_op_reply:
         {
           struct sr_arpreq *req = NULL;
-
           req = sr_arpcache_insert(&(sr->cache), sr_arp_header->ar_sha, sr_arp_header->ar_sip);
+          
           if(req)
           {
             struct sr_packet *pkg = NULL;
+            memset(buffer, 0, 1500);
             for (pkg = req->packets;pkg !=NULL;pkg = pkg->next)
             {
               memcpy(buffer, pkg->buf, pkg->len);
@@ -158,9 +158,9 @@ void sr_handlepacket(struct sr_instance* sr,
               sr_eth_pkg_hdr = (sr_ethernet_hdr_t *)buffer;
               memcpy(sr_eth_pkg_hdr->ether_dhost, sr_arp_header->ar_sha, ETHER_ADDR_LEN);
               memcpy(sr_eth_pkg_hdr->ether_shost, sr_pkg_if->addr, ETHER_ADDR_LEN);
-              sr_eth_pkg_hdr -> ether_type = htons(0x0800);
+              sr_eth_pkg_hdr -> ether_type = htons(ethertype_ip);
 
-              sr_send_packet(sr, buffer, pkg->len, (const char *)interface);
+              sr_send_packet(sr, buffer, pkg->len, interface);
             }
 
             sr_arpreq_destroy(&(sr->cache), req);
@@ -179,7 +179,7 @@ void sr_handlepacket(struct sr_instance* sr,
     case ethertype_ip:
     {
       sr_ip_header = (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
-      
+
       // printf("dst_ip = \n");
       // print_addr_ip_int(ntohl(sr_ip_header->ip_dst));
       // printf("src_ip = \n");
@@ -208,7 +208,7 @@ void sr_handlepacket(struct sr_instance* sr,
             /*set ethernet header*/
             sr_eth_pkg_hdr = (sr_ethernet_hdr_t *)buffer;
             memcpy(sr_eth_pkg_hdr->ether_dhost, sr_eth_header->ether_shost, ETHER_ADDR_LEN);
-            memcpy(sr_eth_pkg_hdr->ether_shost, sr_eth_header->ether_dhost, ETHER_ADDR_LEN);
+            memcpy(sr_eth_pkg_hdr->ether_shost, sr_pkg_if->addr, ETHER_ADDR_LEN);
             sr_eth_pkg_hdr->ether_type = htons(ethertype_ip);
 
             /*set ip header*/
@@ -243,7 +243,7 @@ void sr_handlepacket(struct sr_instance* sr,
         else
         {
           struct sr_rt* next_hp = sr_by_LPM(sr, sr_ip_header->ip_src);
-          struct sr_if* next_if = sr_get_interface(sr, (const char*)next_hp->interface);
+          struct sr_if* next_if = sr_get_interface(sr, next_hp->interface);
 
           /*set ethernet header*/
           sr_eth_pkg_hdr = (sr_ethernet_hdr_t *)buffer;
@@ -295,7 +295,7 @@ void sr_handlepacket(struct sr_instance* sr,
         /*if ttl is less or equal to 1, send icamp that ttl is expired*/
         {
           struct sr_rt* next_hp = sr_by_LPM(sr, sr_ip_header->ip_src);
-          struct sr_if* next_if = sr_get_interface(sr, (const char*)next_hp->interface);
+          struct sr_if* next_if = sr_get_interface(sr, next_hp->interface);
           
           sr_eth_pkg_hdr = (sr_ethernet_hdr_t *)buffer;
           memcpy(sr_eth_pkg_hdr->ether_dhost, sr_eth_header->ether_shost, ETHER_ADDR_LEN);
@@ -330,18 +330,17 @@ void sr_handlepacket(struct sr_instance* sr,
           sr_icmp_t3_pkg_hdr->icmp_sum = cksum(sr_icmp_t3_pkg_hdr, sizeof(sr_icmp_t3_hdr_t));
 
           int ether_frame_len = sizeof(sr_ethernet_hdr_t)+sizeof(sr_ip_hdr_t)+sizeof(sr_icmp_t3_hdr_t);
-          sr_send_packet(sr, buffer, ether_frame_len, (const char *)next_hp->interface);
+          sr_send_packet(sr, buffer, ether_frame_len, next_hp->interface);
         }
         else
         {
           struct sr_rt* next_hp = sr_by_LPM(sr, sr_ip_header->ip_dst);
 
-          //print_addr_ip_int(ntohl(sr_ip_header->ip_dst));
           if(!next_hp)
           /*if not matching ip address, send dest net unreachable, type3, code 0*/
           {
             struct sr_rt* next_hp = sr_by_LPM(sr, sr_ip_header->ip_src);
-            struct sr_if* next_if = sr_get_interface(sr, (const char*)next_hp->interface);
+            struct sr_if* next_if = sr_get_interface(sr, next_hp->interface);
           
             sr_eth_pkg_hdr = (sr_ethernet_hdr_t *)buffer;
             memcpy(sr_eth_pkg_hdr->ether_dhost, sr_eth_header->ether_shost, ETHER_ADDR_LEN);
@@ -376,7 +375,7 @@ void sr_handlepacket(struct sr_instance* sr,
             sr_icmp_t3_pkg_hdr->icmp_sum = cksum(sr_icmp_t3_pkg_hdr, sizeof(sr_icmp_t3_hdr_t));
 
             int ether_frame_len = sizeof(sr_ethernet_hdr_t)+sizeof(sr_ip_hdr_t)+sizeof(sr_icmp_t3_hdr_t);
-            sr_send_packet(sr, buffer, ether_frame_len, (const char *)next_hp->interface);
+            sr_send_packet(sr, buffer, ether_frame_len, next_hp->interface);
           }
           else
           {
@@ -385,20 +384,20 @@ void sr_handlepacket(struct sr_instance* sr,
             /*check if there is a mapping in cache*/
             struct sr_arpentry* entry = sr_arpcache_lookup(&(sr->cache), next_hp->gw.s_addr);
 
+            memcpy(buffer, packet, len);
+
+            sr_ip_pkg_hdr = (sr_ip_hdr_t *)(buffer+sizeof(sr_ethernet_hdr_t));
+            sr_ip_pkg_hdr->ip_ttl--;
+            sr_ip_pkg_hdr->ip_sum = 0;
+            sr_ip_pkg_hdr->ip_sum = cksum(sr_ip_pkg_hdr, sizeof(sr_ip_hdr_t));
+
             if(entry)
             {
               //printf(" i have the entry\n");
-              memcpy(buffer, packet, len);
               sr_eth_pkg_hdr = (sr_ethernet_hdr_t *)buffer;
-
               memcpy(sr_eth_pkg_hdr->ether_dhost, entry->mac, ETHER_ADDR_LEN);
               memcpy(sr_eth_pkg_hdr->ether_shost, next_if->addr, ETHER_ADDR_LEN);
               sr_eth_pkg_hdr->ether_type = htons(ethertype_ip);
-
-              sr_ip_pkg_hdr = (sr_ip_hdr_t *)(buffer+sizeof(sr_ethernet_hdr_t));
-              sr_ip_pkg_hdr->ip_ttl -= 1;
-              sr_ip_pkg_hdr->ip_sum = 0;
-              sr_ip_pkg_hdr->ip_sum = cksum(sr_ip_pkg_hdr, sizeof(sr_ip_hdr_t));
 
               sr_send_packet(sr, buffer, len, next_hp->interface);
             }
@@ -409,11 +408,10 @@ void sr_handlepacket(struct sr_instance* sr,
               /*generate request packet*/
               struct sr_arpreq *req = sr_arpcache_queuereq(&(sr->cache), 
                 next_hp->gw.s_addr, 
-                packet, 
+                buffer, 
                 len, 
                 next_hp->interface);
               /*then we need to handle request*/
-
               handle_arpreq(req, sr);
             }
           }

@@ -84,7 +84,7 @@ void handle_arpreq(struct sr_arpreq *req, struct sr_instance *sr)
                 sr_icmp_t3_pkg_hdr->icmp_sum = cksum(sr_icmp_t3_pkg_hdr, sizeof(sr_icmp_t3_hdr_t));
 
                 int ether_frame_len = sizeof(sr_ethernet_hdr_t)+sizeof(sr_ip_hdr_t)+sizeof(sr_icmp_t3_hdr_t);
-                sr_send_packet(sr, buffer, ether_frame_len, (const char *)(next_hp->interface));
+                sr_send_packet(sr, buffer, ether_frame_len, next_hp->interface);
             }
             sr_arpreq_destroy(&(sr->cache), req);
         }
@@ -112,7 +112,7 @@ void handle_arpreq(struct sr_arpreq *req, struct sr_instance *sr)
             sr_arp_pkg_hdr->ar_sip = src_if->ip;
             sr_arp_pkg_hdr->ar_tip = req->ip;
             memcpy(sr_arp_pkg_hdr->ar_sha, src_if->addr, ETHER_ADDR_LEN);
-            memset(sr_arp_pkg_hdr->ar_tha, 0xff, ETHER_ADDR_LEN);
+            memset(sr_arp_pkg_hdr->ar_tha, 0, ETHER_ADDR_LEN);
 
             sr_send_packet(sr, buffer, ether_frame_len, src_if_name);
 
